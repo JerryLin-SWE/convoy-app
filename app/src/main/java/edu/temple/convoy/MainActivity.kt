@@ -48,12 +48,33 @@ class MainActivity : AppCompatActivity() {
 
         findViewById<Button>(R.id.btnLogin).setOnClickListener {
             //go to Login screen
+            showLoginDialog()
         }
     }
 
     private fun showMainPlaceholder(){
         setContentView(R.layout.activity_main)
         //this become the map screen
+        findViewById<Button>(R.id.btnLogout).setOnClickListener {
+            lifecycleScope.launch {
+                val username = store.username.first()
+                val sessionKey = store.sessionKey.first()
+
+                if (username != null && sessionKey != null) {
+                    ApiClient.api.account(
+                        action = "LOGOUT",
+                        username = username,
+                        password = null,
+                        firstname = null,
+                        lastname = null,
+                        sessionKey = sessionKey
+                    )
+                }
+
+                store.clearAll()
+                showAuthChoice()
+            }
+        }
     }
 
     private fun showRegisterDialog() {
@@ -107,6 +128,85 @@ class MainActivity : AppCompatActivity() {
 
                     } catch (e: Exception) {
                         android.widget.Toast.makeText(this@MainActivity, "Network error", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
+
+        dialog.show()
+    }
+
+    private fun showLoginDialog() {
+        val view = layoutInflater.inflate(R.layout.dialog_login, null)
+
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Log In")
+            .setView(view)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Login", null)
+            .create()
+
+        dialog.setOnShowListener {
+            val btn = dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)
+            btn.setOnClickListener {
+
+                val user = view.findViewById<android.widget.EditText>(R.id.etUsername).text.toString().trim()
+                val pass = view.findViewById<android.widget.EditText>(R.id.etPassword).text.toString().trim()
+
+                if (user.isEmpty() || pass.isEmpty()) {
+                    android.widget.Toast.makeText(
+                        this@MainActivity,
+                        "Fill in all fields",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                    return@setOnClickListener
+                }
+
+                lifecycleScope.launch {
+                    try {
+                        val response = ApiClient.api.account(
+                            action = "LOGIN",
+                            username = user,
+                            password = pass,
+                            firstname = null,
+                            lastname = null,
+                            sessionKey = null
+                        )
+
+                        val status = response["status"]?.toString()
+
+                        if (status == "SUCCESS") {
+
+                            val sessionKey = response["session_key"].toString()
+
+                            // We don’t get first/last from LOGIN,
+                            // so store null for now
+                            store.saveLogin(user, null, null, sessionKey)
+
+                            android.widget.Toast.makeText(
+                                this@MainActivity,
+                                "Login successful!",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+
+                            dialog.dismiss()
+                            showMainPlaceholder()
+
+                        } else {
+                            val message = response["message"]?.toString()
+                            android.widget.Toast.makeText(
+                                this@MainActivity,
+                                message,
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        }
+
+                    } catch (e: Exception) {
+                        android.widget.Toast.makeText(
+                            this@MainActivity,
+                            "Network error",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
                     }
                 }
             }
