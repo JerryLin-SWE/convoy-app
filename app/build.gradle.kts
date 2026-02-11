@@ -4,13 +4,13 @@ plugins {
 }
 
 android {
-    namespace = "com.example.convoy"
+    namespace = "edu.temple.convoy"
     compileSdk {
         version = release(36)
     }
 
     defaultConfig {
-        applicationId = "com.example.convoy"
+        applicationId = "edu.temple.convoy"
         minSdk = 25
         targetSdk = 36
         versionCode = 1
@@ -43,6 +43,8 @@ dependencies {
     implementation(libs.material)
     implementation(libs.androidx.activity)
     implementation(libs.androidx.constraintlayout)
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
