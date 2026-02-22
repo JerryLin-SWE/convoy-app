@@ -281,16 +281,26 @@ class MainActivity : AppCompatActivity() {
                         convoyId = null
                     )
 
-                    if (resp["status"]?.toString() == "SUCCESS") {
-                        val convoyId = resp["convoy_id"]?.toString()?.takeIf { it != "null" }
-                        val isActive = when (val v = resp["active"]) {
+                    val rawStatus = resp["status"]?.toString()
+                    val rawConvoyId = resp["convoy_id"]?.toString()
+                    val rawActive = resp["active"]
+                    runOnUiThread {
+                        android.widget.Toast.makeText(this@MainActivity,
+                            "QUERY: status=$rawStatus active=$rawActive(${rawActive?.javaClass?.simpleName}) convoy=$rawConvoyId",
+                            android.widget.Toast.LENGTH_LONG).show()
+                    }
+                    if (rawStatus == "SUCCESS") {
+                        val convoyId = rawConvoyId?.takeIf { it != "null" && it.isNotBlank() }
+                        val isActive = when (val v = rawActive) {
                             is Boolean -> v
                             is Double -> v != 0.0
-                            is String -> v.toBoolean()
+                            is Int -> v != 0
+                            is Long -> v != 0L
+                            is String -> v == "1" || v.toBoolean()
                             else -> false
                         }
 
-                        if (isActive && (convoyId != null)) {
+                        if (convoyId != null) {
                             store.saveConvoyId(convoyId)
                             runOnUiThread {
                                 setConvoyUI(convoyId, tvConvoyId, btnStart, btnEnd)
