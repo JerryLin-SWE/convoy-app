@@ -22,7 +22,7 @@
         android:theme="@style/Theme.Convoy">
         <meta-data
             android:name="com.google.android.geo.API_KEY"
-            android:value="AIzaSyAs4E_U6ipY2TGqEYwwaRJsSvpmFk_Drbc" />
+            android:value="${MAPS_API_KEY}" />
         <service
             android:name=".ConvoyLocationService"
             android:exported="false"
