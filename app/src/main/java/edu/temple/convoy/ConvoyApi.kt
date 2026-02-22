@@ -24,5 +24,5 @@ interface ConvoyApi {
         @Field("convoy_id") convoyId: String? = null,
         @Field("latitude") latitude: Double? = null,
         @Field("longitude") longitude: Double? = null
-    ): Map<String, Any>
+    ): Map<String, Any?>
 }

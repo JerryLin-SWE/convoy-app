@@ -29,6 +29,7 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.flow.first
 import edu.temple.convoy.ApiClient
 import androidx.appcompat.app.AlertDialog
+import kotlinx.coroutines.runBlocking
 
 
 class MainActivity : AppCompatActivity() {
@@ -40,7 +41,7 @@ class MainActivity : AppCompatActivity() {
     private val LOCATION_REQ = 1001
     private val fused by lazy { LocationServices.getFusedLocationProviderClient(this) }
     private var activeConvoyId: String? = null
-
+    private val memberMarkers = mutableMapOf<String, Marker>()
     private fun setConvoyUI(convoyId: String?, tv: TextView, btnStart: Button, btnEnd: Button) {
         if (!convoyId.isNullOrBlank()) {
             activeConvoyId = convoyId
@@ -170,7 +171,10 @@ class MainActivity : AppCompatActivity() {
                     lifecycleScope.launch {
                         val username = store.username.first() ?: return@launch
                         val sessionKey = store.sessionKey.first() ?: return@launch
-                        val convoyId = activeConvoyId ?: return@launch
+                        val convoyId = activeConvoyId ?: run {
+                            android.widget.Toast.makeText(this@MainActivity, "No active convoy to leave", android.widget.Toast.LENGTH_SHORT).show()
+                            return@launch
+                        }
                         try {
                             val resp = ApiClient.api.convoy(
                                 action = "END",
@@ -238,7 +242,10 @@ class MainActivity : AppCompatActivity() {
                     lifecycleScope.launch {
                         val username = store.username.first() ?: return@launch
                         val sessionKey = store.sessionKey.first() ?: return@launch
-                        val convoyId = activeConvoyId ?: return@launch
+                        val convoyId = activeConvoyId ?: run {
+                            android.widget.Toast.makeText(this@MainActivity, "No active convoy to leave", android.widget.Toast.LENGTH_SHORT).show()
+                            return@launch
+                        }
                         try {
                             ApiClient.api.convoy(
                                 action = "LEAVE",
@@ -275,13 +282,20 @@ class MainActivity : AppCompatActivity() {
                     )
 
                     if (resp["status"]?.toString() == "SUCCESS") {
-                        val convoyId = resp["convoy_id"]?.toString()
-                        val isActive = resp["active"]?.toString()?.toBoolean() ?: false
+                        val convoyId = resp["convoy_id"]?.toString()?.takeIf { it != "null" }
+                        val isActive = when (val v = resp["active"]) {
+                            is Boolean -> v
+                            is Double -> v != 0.0
+                            is String -> v.toBoolean()
+                            else -> false
+                        }
 
-                        if (isActive && convoyId != null) {
-                            setConvoyUI(convoyId, tvConvoyId, btnStart, btnEnd)
-                            startConvoyService()
-
+                        if (isActive && (convoyId != null)) {
+                            store.saveConvoyId(convoyId)
+                            runOnUiThread {
+                                setConvoyUI(convoyId, tvConvoyId, btnStart, btnEnd)
+                                startConvoyService()
+                            }
                         }
                     }
                 } catch (e: Exception) {
@@ -414,7 +428,7 @@ class MainActivity : AppCompatActivity() {
                         }
 
                     } catch (e: Exception) {
-                        android.widget.Toast.makeText(this@MainActivity, "Network error", android.widget.Toast.LENGTH_LONG).show()
+                        android.widget.Toast.makeText(this@MainActivity, e.message ?: "Network error", android.widget.Toast.LENGTH_LONG).show()
                     }
                 }
             }
@@ -518,16 +532,96 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+    private val convoyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                "edu.temple.convoy.ACTION_CONVOY_UPDATE" -> {
+                    val payload = intent.getStringExtra("payload") ?: return
+                    val json = org.json.JSONObject(payload)
+                    val data = json.getJSONArray("data")
+                    val currentUsername = runBlocking { store.username.first() }
+
+                    // Remove markers for users no longer in convoy
+                    val activeUsernames = (0 until data.length()).map {
+                        data.getJSONObject(it).getString("username")
+                    }.toSet()
+                    val toRemove = memberMarkers.keys.filter { it !in activeUsernames }
+                    toRemove.forEach { memberMarkers.remove(it)?.remove() }
+
+                    // Add/update markers for each member except yourself
+                    for (i in 0 until data.length()) {
+                        val user = data.getJSONObject(i)
+                        val username = user.getString("username")
+                        if (username == currentUsername) continue // skip yourself
+
+                        val lat = user.getDouble("latitude")
+                        val lng = user.getDouble("longitude")
+                        val name = "${user.getString("firstname")} ${user.getString("lastname")}"
+                        val pos = LatLng(lat, lng)
+
+                        val existing = memberMarkers[username]
+                        if (existing == null) {
+                            val marker = gMap?.addMarker(
+                                MarkerOptions()
+                                    .position(pos)
+                                    .title(name)
+                                    .icon(com.google.android.gms.maps.model.BitmapDescriptorFactory
+                                        .defaultMarker(com.google.android.gms.maps.model.BitmapDescriptorFactory.HUE_BLUE))
+                            )
+                            if (marker != null) memberMarkers[username] = marker
+                        } else {
+                            existing.position = pos
+                        }
+                    }
+
+                    // Zoom to show all members
+                    if (memberMarkers.isNotEmpty()) {
+                        val builder = com.google.android.gms.maps.model.LatLngBounds.Builder()
+                        memberMarkers.values.forEach { builder.include(it.position) }
+                        userMarker?.let { builder.include(it.position) }
+                        try {
+                            gMap?.animateCamera(
+                                CameraUpdateFactory.newLatLngBounds(builder.build(), 200)
+                            )
+                        } catch (e: Exception) { }
+                    }
+                }
+
+                "edu.temple.convoy.ACTION_CONVOY_END" -> {
+                    // Clear all member markers
+                    memberMarkers.values.forEach { it.remove() }
+                    memberMarkers.clear()
+                    // Find UI views and reset
+                    val tv = findViewById<TextView>(R.id.tvConvoyId)
+                    val btnStart = findViewById<Button>(R.id.btnStartConvoy)
+                    val btnEnd = findViewById<Button>(R.id.btnEndConvoy)
+                    store.let {
+                        lifecycleScope.launch { it.saveConvoyId(null) }
+                    }
+                    stopService(Intent(this@MainActivity, ConvoyLocationService::class.java))
+                    setConvoyUI(null, tv, btnStart, btnEnd)
+                    android.widget.Toast.makeText(this@MainActivity, "Convoy ended by creator", android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
     override fun onStart() {
         super.onStart()
 
-        val filter = IntentFilter(ConvoyLocationService.ACTION_LOCATION)
-
+        // Register location receiver
+        val locationFilter = IntentFilter(ConvoyLocationService.ACTION_LOCATION)
         ContextCompat.registerReceiver(
-            this,
-            locationReceiver,
-            filter,
-            ContextCompat.RECEIVER_NOT_EXPORTED
+            this, locationReceiver, locationFilter, ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+
+        // Register convoy FCM receiver
+        val convoyFilter = IntentFilter().apply {
+            addAction("edu.temple.convoy.ACTION_CONVOY_UPDATE")
+            addAction("edu.temple.convoy.ACTION_CONVOY_END")
+        }
+        ContextCompat.registerReceiver(
+            this, convoyReceiver, convoyFilter, ContextCompat.RECEIVER_NOT_EXPORTED
         )
     }
 
@@ -535,6 +629,7 @@ class MainActivity : AppCompatActivity() {
     override fun onStop() {
         super.onStop()
         unregisterReceiver(locationReceiver)
+        unregisterReceiver(convoyReceiver)
     }
 
 
