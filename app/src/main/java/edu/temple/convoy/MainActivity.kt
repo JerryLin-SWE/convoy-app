@@ -1,4 +1,6 @@
 package edu.temple.convoy
+import android.media.MediaPlayer
+import android.media.MediaRecorder
 import android.view.View
 import androidx.core.content.ContextCompat
 import android.content.BroadcastReceiver
@@ -11,7 +13,6 @@ import android.content.pm.PackageManager
 import androidx.core.app.ActivityCompat
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.maps.GoogleMap
-import com.google.android.gms.maps.OnMapReadyCallback
 import com.google.android.gms.maps.SupportMapFragment
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.Marker
@@ -20,16 +21,17 @@ import com.google.android.gms.maps.CameraUpdateFactory
 import kotlinx.coroutines.launch
 import android.os.Bundle
 import android.widget.Button
-import androidx.activity.enableEdgeToEdge
-import androidx.annotation.RequiresPermission
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.flow.first
-import edu.temple.convoy.ApiClient
 import androidx.appcompat.app.AlertDialog
 import kotlinx.coroutines.runBlocking
+import com.google.firebase.messaging.FirebaseMessaging
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.File
 
 
 class MainActivity : AppCompatActivity() {
@@ -39,20 +41,29 @@ class MainActivity : AppCompatActivity() {
     private var gMap: GoogleMap? = null
     private var userMarker: Marker? = null
     private val LOCATION_REQ = 1001
+    private val AUDIO_REQ = 1002
     private val fused by lazy { LocationServices.getFusedLocationProviderClient(this) }
     private var activeConvoyId: String? = null
     private val memberMarkers = mutableMapOf<String, Marker>()
+
+    private var mediaRecorder: MediaRecorder? = null
+    private var audioFile: File? = null
+    private var isRecording = false
+
     private fun setConvoyUI(convoyId: String?, tv: TextView, btnStart: Button, btnEnd: Button) {
+        val btnVoice = findViewById<Button>(R.id.btnVoice)
         if (!convoyId.isNullOrBlank()) {
             activeConvoyId = convoyId
             tv.text = "Convoy: $convoyId"
             btnStart.visibility = View.GONE
             btnEnd.visibility = View.VISIBLE
+            btnVoice?.visibility = View.VISIBLE
         } else {
             activeConvoyId = null
             tv.text = "No convoy"
             btnEnd.visibility = View.GONE
             btnStart.visibility = View.VISIBLE
+            btnVoice?.visibility = View.GONE
         }
     }
 
@@ -261,6 +272,22 @@ class MainActivity : AppCompatActivity() {
                 }.show()
         }
 
+        val btnVoice = findViewById<Button>(R.id.btnVoice)
+        btnVoice.setOnClickListener {
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this,
+                    arrayOf(Manifest.permission.RECORD_AUDIO), AUDIO_REQ)
+                return@setOnClickListener
+            }
+            if (!isRecording) {
+                startRecording()
+                btnVoice.text = "⏹"
+                android.widget.Toast.makeText(this, "Recording…", android.widget.Toast.LENGTH_SHORT).show()
+            } else {
+                stopRecordingAndSend(btnVoice)
+            }
+        }
 
         val mapFrag = supportFragmentManager.findFragmentById(R.id.mapFragment) as SupportMapFragment
         mapFrag.getMapAsync { map ->
@@ -378,11 +405,70 @@ class MainActivity : AppCompatActivity() {
         if (requestCode == LOCATION_REQ && grantResults.any { it == PackageManager.PERMISSION_GRANTED }) {
             startOneShotLocation()
         }
+        if (requestCode == AUDIO_REQ && grantResults.any { it == PackageManager.PERMISSION_GRANTED }) {
+            android.widget.Toast.makeText(this, "Mic permission granted — tap 🎤 again to record", android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
 
 
 
 
+
+    private fun startRecording() {
+        val file = File(cacheDir, "voice_${System.currentTimeMillis()}.mp4")
+        audioFile = file
+        mediaRecorder = MediaRecorder().apply {
+            setAudioSource(MediaRecorder.AudioSource.MIC)
+            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            setOutputFile(file.absolutePath)
+            prepare()
+            start()
+        }
+        isRecording = true
+    }
+
+    private fun stopRecordingAndSend(btnVoice: Button) {
+        mediaRecorder?.apply { stop(); release() }
+        mediaRecorder = null
+        isRecording = false
+        btnVoice.text = "🎤"
+
+        val file = audioFile ?: return
+        lifecycleScope.launch {
+            val username = store.username.first() ?: return@launch
+            val sessionKey = store.sessionKey.first() ?: return@launch
+            val convoyId = activeConvoyId ?: return@launch
+            try {
+                val filePart = MultipartBody.Part.createFormData(
+                    "message_file", file.name,
+                    file.asRequestBody("audio/mp4".toMediaTypeOrNull())
+                )
+                val resp = ApiClient.api.message(
+                    action = "MESSAGE".toRequestBody("text/plain".toMediaTypeOrNull()),
+                    username = username.toRequestBody("text/plain".toMediaTypeOrNull()),
+                    sessionKey = sessionKey.toRequestBody("text/plain".toMediaTypeOrNull()),
+                    convoyId = convoyId.toRequestBody("text/plain".toMediaTypeOrNull()),
+                    messageFile = filePart
+                )
+                if (resp["status"]?.toString() != "SUCCESS") {
+                    runOnUiThread {
+                        android.widget.Toast.makeText(this@MainActivity,
+                            resp["message"]?.toString() ?: "Send failed",
+                            android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    android.widget.Toast.makeText(this@MainActivity,
+                        "Error sending voice message", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            } finally {
+                file.delete()
+                audioFile = null
+            }
+        }
+    }
 
     private fun showRegisterDialog() {
         val view = layoutInflater.inflate(R.layout.dialog_register, null)
