@@ -79,6 +79,9 @@ class MainActivity : AppCompatActivity() {
 
         store = SessionStore(this)
 
+        val messageFilter = IntentFilter("edu.temple.convoy.ACTION_CONVOY_MESSAGE")
+        ContextCompat.registerReceiver(this, messageReceiver, messageFilter, ContextCompat.RECEIVER_NOT_EXPORTED)
+
         lifecycleScope.launch {
             val key = store.sessionKey.first()
             if (key == null) {
@@ -509,19 +512,22 @@ class MainActivity : AppCompatActivity() {
 
                             store.saveLogin(user, first, last, sessionKey)
 
-                            FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
-                                lifecycleScope.launch {
-                                    try {
-                                        ApiClient.api.account(
-                                            action = "UPDATE",
-                                            username = user,
-                                            password = null,
-                                            fcmToken = token,
-                                            firstname = null,
-                                            lastname = null,
-                                            sessionKey = sessionKey
-                                        )
-                                    } catch (e: Exception) { }
+                            FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                                if (task.isSuccessful) {
+                                    val token = task.result
+                                    lifecycleScope.launch {
+                                        try {
+                                            ApiClient.api.account(
+                                                action = "UPDATE",
+                                                username = user,
+                                                password = null,
+                                                fcmToken = token,
+                                                firstname = null,
+                                                lastname = null,
+                                                sessionKey = sessionKey
+                                            )
+                                        } catch (e: Exception) { }
+                                    }
                                 }
                             }
 
@@ -592,19 +598,26 @@ class MainActivity : AppCompatActivity() {
 
                             store.saveLogin(user, null, null, sessionKey)
 
-                            FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
-                                lifecycleScope.launch {
-                                    try {
-                                        ApiClient.api.account(
-                                            action = "UPDATE",
-                                            username = user,
-                                            password = null,
-                                            fcmToken = token,
-                                            firstname = null,
-                                            lastname = null,
-                                            sessionKey = sessionKey
-                                        )
-                                    } catch (e: Exception) { }
+                            FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                                android.util.Log.d("ConvoyFCM", "token task success=${task.isSuccessful} token=${task.result}")
+                                if (task.isSuccessful) {
+                                    val token = task.result
+                                    lifecycleScope.launch {
+                                        try {
+                                            val updateResp = ApiClient.api.account(
+                                                action = "UPDATE",
+                                                username = user,
+                                                password = null,
+                                                fcmToken = token,
+                                                firstname = null,
+                                                lastname = null,
+                                                sessionKey = sessionKey
+                                            )
+                                            android.util.Log.d("ConvoyFCM", "FCM UPDATE resp=$updateResp")
+                                        } catch (e: Exception) {
+                                            android.util.Log.e("ConvoyFCM", "FCM UPDATE error", e)
+                                        }
+                                    }
                                 }
                             }
 
@@ -763,11 +776,6 @@ class MainActivity : AppCompatActivity() {
             this, convoyReceiver, convoyFilter, ContextCompat.RECEIVER_NOT_EXPORTED
         )
 
-        // Register voice message receiver
-        val messageFilter = IntentFilter("edu.temple.convoy.ACTION_CONVOY_MESSAGE")
-        ContextCompat.registerReceiver(
-            this, messageReceiver, messageFilter, ContextCompat.RECEIVER_NOT_EXPORTED
-        )
     }
 
 
@@ -775,6 +783,10 @@ class MainActivity : AppCompatActivity() {
         super.onStop()
         unregisterReceiver(locationReceiver)
         unregisterReceiver(convoyReceiver)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
         unregisterReceiver(messageReceiver)
     }
 

@@ -43,6 +43,7 @@ class ConvoyMessagingService : FirebaseMessagingService() {
     // Called when an FCM message arrives
     override fun onMessageReceived(message: RemoteMessage) {
         super.onMessageReceived(message)
+        android.util.Log.d("ConvoyFCM", "onMessageReceived: data=${message.data}")
 
         val payload = message.data["payload"] ?: return
 
@@ -66,7 +67,7 @@ class ConvoyMessagingService : FirebaseMessagingService() {
                 "MESSAGE" -> {
                     val intent = Intent("edu.temple.convoy.ACTION_CONVOY_MESSAGE")
                     intent.putExtra("username", json.optString("username"))
-                    intent.putExtra("message_url", json.optString("message_url"))
+                    intent.putExtra("message_url", json.optString("message_file"))
                     sendBroadcast(intent)
                 }
             }
