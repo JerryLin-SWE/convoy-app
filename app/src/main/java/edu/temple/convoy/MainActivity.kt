@@ -149,11 +149,8 @@ class MainActivity : AppCompatActivity() {
                     val status = resp["status"]?.toString()
                     if (status == "SUCCESS") {
                         val convoyId = resp["convoy_id"]?.toString()
-                        tvConvoyId.text = "Convoy: $convoyId"
-                        activeConvoyId = convoyId
                         store.saveConvoyId(convoyId)
-                        btnStart.visibility = View.GONE
-                        btnEnd.visibility = View.VISIBLE
+                        runOnUiThread { setConvoyUI(convoyId, tvConvoyId, btnStart, btnEnd) }
 
                         val svc = Intent(this@MainActivity, ConvoyLocationService::class.java)
                         if (android.os.Build.VERSION.SDK_INT >= 26) {
@@ -512,6 +509,22 @@ class MainActivity : AppCompatActivity() {
 
                             store.saveLogin(user, first, last, sessionKey)
 
+                            FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
+                                lifecycleScope.launch {
+                                    try {
+                                        ApiClient.api.account(
+                                            action = "UPDATE",
+                                            username = user,
+                                            password = null,
+                                            fcmToken = token,
+                                            firstname = null,
+                                            lastname = null,
+                                            sessionKey = sessionKey
+                                        )
+                                    } catch (e: Exception) { }
+                                }
+                            }
+
                             runOnUiThread {
                                 android.widget.Toast.makeText(this@MainActivity, "Account created!", android.widget.Toast.LENGTH_SHORT).show()
 
@@ -579,6 +592,22 @@ class MainActivity : AppCompatActivity() {
 
                             store.saveLogin(user, null, null, sessionKey)
 
+                            FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
+                                lifecycleScope.launch {
+                                    try {
+                                        ApiClient.api.account(
+                                            action = "UPDATE",
+                                            username = user,
+                                            password = null,
+                                            fcmToken = token,
+                                            firstname = null,
+                                            lastname = null,
+                                            sessionKey = sessionKey
+                                        )
+                                    } catch (e: Exception) { }
+                                }
+                            }
+
                             runOnUiThread {
                                 android.widget.Toast.makeText(
                                     this@MainActivity,
@@ -612,6 +641,20 @@ class MainActivity : AppCompatActivity() {
 
         dialog.show()
     }
+    private val messageReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != "edu.temple.convoy.ACTION_CONVOY_MESSAGE") return
+            val sender = intent.getStringExtra("username") ?: "Someone"
+            val url = intent.getStringExtra("message_url") ?: return
+            android.widget.Toast.makeText(this@MainActivity, "🎤 $sender sent a voice message", android.widget.Toast.LENGTH_SHORT).show()
+            val player = MediaPlayer()
+            player.setDataSource(url)
+            player.prepareAsync()
+            player.setOnPreparedListener { it.start() }
+            player.setOnCompletionListener { it.release() }
+        }
+    }
+
     private val locationReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != ConvoyLocationService.ACTION_LOCATION) return
@@ -719,6 +762,12 @@ class MainActivity : AppCompatActivity() {
         ContextCompat.registerReceiver(
             this, convoyReceiver, convoyFilter, ContextCompat.RECEIVER_NOT_EXPORTED
         )
+
+        // Register voice message receiver
+        val messageFilter = IntentFilter("edu.temple.convoy.ACTION_CONVOY_MESSAGE")
+        ContextCompat.registerReceiver(
+            this, messageReceiver, messageFilter, ContextCompat.RECEIVER_NOT_EXPORTED
+        )
     }
 
 
@@ -726,6 +775,7 @@ class MainActivity : AppCompatActivity() {
         super.onStop()
         unregisterReceiver(locationReceiver)
         unregisterReceiver(convoyReceiver)
+        unregisterReceiver(messageReceiver)
     }
 
 
