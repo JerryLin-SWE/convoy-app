@@ -95,6 +95,21 @@ class MainActivity : AppCompatActivity() {
     private fun restartToAuth() {
         stopService(Intent(this, ConvoyLocationService::class.java))
         lifecycleScope.launch {
+            val username = store.username.first()
+            val sessionKey = store.sessionKey.first()
+            if (username != null && sessionKey != null) {
+                try {
+                    ApiClient.api.account(
+                        action = "LOGOUT",
+                        username = username,
+                        password = null,
+                        fcmToken = null,
+                        firstname = null,
+                        lastname = null,
+                        sessionKey = sessionKey
+                    )
+                } catch (e: Exception) { }
+            }
             store.clearAll()
             val i = Intent(this@MainActivity, MainActivity::class.java)
             i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -120,6 +135,31 @@ class MainActivity : AppCompatActivity() {
 
     private fun showMainPlaceholder(){
         setContentView(R.layout.activity_main)
+
+        // Re-register FCM token on every app start in case it wasn't sent before
+        lifecycleScope.launch {
+            val username = store.username.first() ?: return@launch
+            val sessionKey = store.sessionKey.first() ?: return@launch
+            FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    val token = task.result
+                    lifecycleScope.launch {
+                        try {
+                            ApiClient.api.account(
+                                action = "UPDATE",
+                                username = username,
+                                password = null,
+                                fcmToken = token,
+                                firstname = null,
+                                lastname = null,
+                                sessionKey = sessionKey
+                            )
+                        } catch (e: Exception) { }
+                    }
+                }
+            }
+        }
+
         //this become the map screen
         val tvConvoyId = findViewById<android.widget.TextView>(R.id.tvConvoyId)
         val btnStart = findViewById<Button>(R.id.btnStartConvoy)
